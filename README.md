@@ -4,6 +4,8 @@ Allocate students, or groups of students, to projects from their ranked choices.
 The solver maximizes total satisfaction with integer programming (HiGHS via `scipy.optimize.milp`).
 A group can have any size: a student working alone is just a group of one.
 
+Documentation: https://pierremarchand20.github.io/student-project-allocation/
+
 ## Install
 
 ```
@@ -64,6 +66,10 @@ allocate(
 ```
 pip install -e '.[test]' && pytest
 ```
+
+## Acknowledgements
+
+The integer programming formulation follows explanations by Sourour Elloumi.
 
 ## Documentation
 

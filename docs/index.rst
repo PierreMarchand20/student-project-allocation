@@ -133,3 +133,8 @@ satisfied project, while losing at most :math:`\varepsilon` of :math:`S^*`:
 Many allocations are often equally good. The solver returns one of them, so two
 solvers, or two versions of one, may assign some groups differently with the
 same total satisfaction.
+
+Acknowledgements
+----------------
+
+The integer programming formulation follows explanations by Sourour Elloumi.

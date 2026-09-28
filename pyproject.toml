@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["pandas", "scipy>=1.9"]
 
+[project.urls]
+Documentation = "https://pierremarchand20.github.io/student-project-allocation/"
+Source = "https://github.com/PierreMarchand20/student-project-allocation"
+
 [project.optional-dependencies]
 test = ["pytest"]
 docs = ["sphinx"]
