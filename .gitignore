@@ -1,0 +1,11 @@
+# Everything in this folder is ignored by default (student data, course scripts):
+# only the package files below are tracked.
+/*
+!/.gitignore
+!/README.md
+!/pyproject.toml
+!/student_project_allocation.py
+!/test_allocation.py
+!/docs/
+/docs/_build/
+!/.github/

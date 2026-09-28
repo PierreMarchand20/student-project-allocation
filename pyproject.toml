@@ -1,0 +1,21 @@
+[project]
+name = "student-project-allocation"
+version = "0.1.0"
+description = "Allocate students (or groups of students) to projects from their ranked choices, by integer programming"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["pandas", "scipy>=1.9"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+docs = ["sphinx"]
+
+[project.scripts]
+spa = "student_project_allocation:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["student_project_allocation"]
