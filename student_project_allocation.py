@@ -12,7 +12,14 @@ from scipy.optimize import Bounds, LinearConstraint, milp
 
 
 def allocate(
-    choices, projects, capacity=None, weights=None, scores=None, balance_projects=None
+    choices,
+    projects,
+    capacity=None,
+    weights=None,
+    scores=None,
+    epsilon=0,
+    fewest_unsatisfied=False,
+    balance_projects=False,
 ):
     """Assign each group to exactly one project, maximizing total satisfaction.
 
@@ -26,8 +33,13 @@ def allocate(
         Default: 1 for every group.
     :param scores: score of each rank, best first. Default: ``(k, k-1, ..., 1)``
         for ``k`` choices. A project the group did not choose scores 0.
-    :param balance_projects: if set, a second pass accepts losing up to this much
-        total satisfaction to maximize the satisfaction of the least satisfied project.
+    :param epsilon: total satisfaction that ``fewest_unsatisfied`` and
+        ``balance_projects`` may give up, below the best possible total.
+    :param fewest_unsatisfied: minimize the number of groups given a project they
+        did not choose.
+    :param balance_projects: maximize the satisfaction of the least satisfied project.
+        With ``fewest_unsatisfied`` too, only among the allocations with the fewest
+        unsatisfied groups.
     :returns: ``{group: project}``.
     :raises ValueError: if a choice is not in ``projects``.
     :raises RuntimeError: if no allocation satisfies the capacities.
@@ -53,10 +65,12 @@ def allocate(
     groups = list(choices)
     column = {p: j for j, p in enumerate(projects)}
     satisfaction = np.zeros((len(groups), len(projects)))
+    chosen = np.zeros(satisfaction.shape, dtype=bool)
     for i, g in enumerate(groups):
         for rank, p in reversed(list(enumerate(choices[g][: len(scores)]))):
             if p is not None:  # reversed: a repeated choice keeps its best rank
                 satisfaction[i, column[p]] = weights.get(g, 1) * scores[rank]
+                chosen[i, column[p]] = True
 
     # x[i, j] = 1 if group i gets project j, flattened row by row
     one_project_per_group = LinearConstraint(
@@ -68,32 +82,45 @@ def allocate(
         [capacity[p][1] for p in projects],
     )
     constraints = [one_project_per_group, groups_per_project]
-    x = _solve(-satisfaction.ravel(), constraints, integrality=1, bounds=Bounds(0, 1))
+    total = satisfaction.ravel()
+    binary = dict(integrality=1, bounds=Bounds(0, 1))
+    x = _solve(-total, constraints, **binary)
+    if not (fewest_unsatisfied or balance_projects):
+        return _assignment(x, groups, projects)
 
-    if balance_projects is not None:
-        # Same variables plus theta, the satisfaction of the least satisfied project
-        n = satisfaction.size
-        best = satisfaction.ravel() @ x
-        with_theta = lambda A, theta_coef: sparse.hstack(
-            [A, np.full((A.shape[0], 1), theta_coef)]
-        )
-        project_satisfaction = groups_per_project.A @ sparse.diags(satisfaction.ravel())
-        constraints = [
-            LinearConstraint(with_theta(c.A, 0), c.lb, c.ub) for c in constraints
-        ] + [
-            LinearConstraint(with_theta(project_satisfaction, -1), 0, np.inf),
-            LinearConstraint(
-                np.append(satisfaction.ravel(), 0), best - balance_projects - 1e-6, np.inf
-            ),
-        ]
-        x = _solve(
+    # Each step keeps the optimum of the previous ones as a constraint
+    constraints.append(LinearConstraint(total, total @ x - epsilon - 1e-6, np.inf))
+
+    if fewest_unsatisfied:
+        unchosen = (~chosen).ravel().astype(float)
+        x = _solve(unchosen, constraints, **binary)
+        constraints.append(LinearConstraint(unchosen, 0, unchosen @ x + 1e-6))
+
+    if balance_projects:
+        # theta, the satisfaction of the least satisfied project, is one more variable
+        n = total.size
+        project_satisfaction = groups_per_project.A @ sparse.diags(total)
+        theta = _solve(
             np.append(np.zeros(n), -1),
-            constraints,
+            [LinearConstraint(_with_column(c.A, 0), c.lb, c.ub) for c in constraints]
+            + [LinearConstraint(_with_column(project_satisfaction, -1), 0, np.inf)],
             integrality=np.append(np.ones(n), 0),
             bounds=Bounds(0, np.append(np.ones(n), np.inf)),
-        )[:n]
+        )[-1]
+        constraints.append(LinearConstraint(project_satisfaction, theta - 1e-6, np.inf))
 
-    x = x.reshape(satisfaction.shape)
+    # Finally the best total under these constraints, so none is given up for nothing
+    x = _solve(-total, constraints, **binary)
+    return _assignment(x, groups, projects)
+
+
+def _with_column(A, value):
+    A = sparse.csr_matrix(A)  # also turns a 1-D row into a matrix
+    return sparse.hstack([A, np.full((A.shape[0], 1), value)])
+
+
+def _assignment(x, groups, projects):
+    x = x.reshape(len(groups), len(projects))
     return {g: projects[j] for g, j in zip(groups, x.argmax(axis=1))}
 
 
@@ -128,10 +155,21 @@ def main(argv=None):
         "--weight", metavar="COLUMN", help="column holding each group's weight"
     )
     parser.add_argument(
-        "--balance-projects",
+        "--epsilon",
         type=float,
-        metavar="EPSILON",
-        help="accept losing up to EPSILON total satisfaction to raise the least satisfied project",
+        default=0,
+        help="total satisfaction the options below may give up (default: 0)",
+    )
+    parser.add_argument(
+        "--fewest-unsatisfied",
+        action="store_true",
+        help="give as few groups as possible a project they did not choose",
+    )
+    parser.add_argument(
+        "--balance-projects",
+        action="store_true",
+        help="raise the satisfaction of the least satisfied project "
+        "(after --fewest-unsatisfied if both are given)",
     )
     parser.add_argument("--sep", default=",", help="CSV separator (default: ,)")
     parser.add_argument(
@@ -161,7 +199,13 @@ def main(argv=None):
 
     try:
         allocation = allocate(
-            choices, projects, capacity, weights, balance_projects=args.balance_projects
+            choices,
+            projects,
+            capacity,
+            weights,
+            epsilon=args.epsilon,
+            fewest_unsatisfied=args.fewest_unsatisfied,
+            balance_projects=args.balance_projects,
         )
     except (ValueError, RuntimeError) as e:
         sys.exit(f"error: {e}")

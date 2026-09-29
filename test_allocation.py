@@ -41,9 +41,62 @@ def test_cli(tmp_path, capsys):
     assert "choice 1: 2" in err and "choice 2: 2" in err
 
 
+def unsatisfied(choices, result):
+    return sum(result[g] not in choices[g] for g in choices)
+
+
+def least_satisfied_project(choices, result, scores):
+    total = dict.fromkeys(result.values(), 0)
+    for g, p in result.items():
+        if p in choices[g]:
+            total[p] += scores[choices[g].index(p)]
+    return min(total.values())
+
+
 def test_balance_projects():
     # Everyone prefers P1; balancing gives up 1 point so that P2 is not left at 0.
     choices = {g: ["P1", "P2"] for g in "abcd"}
     assert set(allocate(choices, ["P1", "P2"], capacity=(0, 4)).values()) == {"P1"}
-    result = allocate(choices, ["P1", "P2"], capacity=(0, 4), balance_projects=1)
+    result = allocate(
+        choices, ["P1", "P2"], capacity=(0, 4), epsilon=1, balance_projects=True
+    )
     assert sorted(result.values()) == ["P1", "P1", "P1", "P2"]
+
+
+def test_fewest_unsatisfied():
+    # One place per project. The best total (20) leaves b on a project it did not
+    # choose; giving up 8 points lets every group get one of its choices (total 12).
+    choices = {"a": ["P1", "P2"], "b": ["P1", "P2"], "c": ["P2", "P3"]}
+    kwargs = dict(projects=["P1", "P2", "P3"], capacity=(0, 1), scores=[10, 1])
+    result = allocate(choices, epsilon=7, fewest_unsatisfied=True, **kwargs)
+    assert unsatisfied(choices, result) == 1
+    result = allocate(choices, epsilon=8, fewest_unsatisfied=True, **kwargs)
+    assert unsatisfied(choices, result) == 0 and result["c"] == "P3"
+
+
+def test_options_give_up_nothing_when_nothing_to_gain():
+    # Everyone already gets a first choice: no satisfaction may be given up.
+    choices = {"a": ["P1", "P2"], "b": ["P2", "P1"]}
+    for option in ("fewest_unsatisfied", "balance_projects"):
+        result = allocate(choices, ["P1", "P2"], capacity=(0, 2), epsilon=5, **{option: True})
+        assert result == {"a": "P1", "b": "P2"}
+
+
+def test_fewest_unsatisfied_comes_before_balance_projects():
+    # Balancing alone leaves b outside its choices to raise the least satisfied
+    # project to 3; with both options everyone is satisfied and it only reaches 2.
+    choices = {
+        "a": ["P2", "P1"],
+        "b": ["P3"],
+        "c": ["P3", "P1"],
+        "d": ["P3"],
+        "e": ["P3", "P1"],
+        "f": ["P1", "P2"],
+    }
+    kwargs = dict(projects=["P1", "P2", "P3"], capacity=(2, 3), scores=[3, 1], epsilon=8)
+    result = allocate(choices, balance_projects=True, **kwargs)
+    assert unsatisfied(choices, result) == 1
+    assert least_satisfied_project(choices, result, [3, 1]) == 3
+    result = allocate(choices, fewest_unsatisfied=True, balance_projects=True, **kwargs)
+    assert unsatisfied(choices, result) == 0
+    assert least_satisfied_project(choices, result, [3, 1]) == 2

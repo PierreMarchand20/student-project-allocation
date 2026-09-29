@@ -40,8 +40,11 @@ Options:
 - `--min N` / `--max N`: number of groups per project. By default it is the average ± 1.
 - `--weight COLUMN`: a column that multiplies each group's satisfaction. Use it to lower the priority
   of late or incomplete answers, for example.
-- `--balance-projects EPSILON`: after finding the best total satisfaction, accept losing up to `EPSILON`
-  to maximize the total satisfaction of the least satisfied project.
+- `--fewest-unsatisfied`: give as few groups as possible a project they did not choose.
+- `--balance-projects`: maximize the total satisfaction of the least satisfied project
+  (after `--fewest-unsatisfied` if both are given).
+- `--epsilon EPSILON`: total satisfaction the two options above may give up, below the best
+  possible total (default 0).
 - `--sep ';'`: the CSV separator.
 
 A choice scores `k` for first, `k-1` for second, …, `1` for the `k`-th, and `0` if the project was not chosen.
