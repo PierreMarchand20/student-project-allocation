@@ -1,6 +1,6 @@
 [project]
 name = "student-project-allocation"
-version = "0.1.0"
+version = "0.2.0"
 description = "Allocate students (or groups of students) to projects from their ranked choices, by integer programming"
 readme = "README.md"
 requires-python = ">=3.10"
