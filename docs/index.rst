@@ -56,27 +56,41 @@ command also prints how many groups got each rank.
    Minimum and maximum number of groups per project. Default: the average
    number of groups per project ± 1.
 
+.. option:: --capacities FILE
+
+   CSV file for a different number of groups per project: the projects in the
+   first column and the ``min`` and ``max`` columns. It replaces
+   :option:`--projects`, :option:`--min` and :option:`--max`.
+
+   .. code-block:: text
+
+      project,min,max
+      Acoustics,2,4
+      Robotics,1,3
+
 .. option:: --weight COLUMN
 
    Column holding a weight that multiplies each group's satisfaction. Use it to
    lower the priority of late or incomplete answers, for example.
 
-.. option:: --epsilon EPSILON
-
-   Total satisfaction that :option:`--fewest-unsatisfied` and
-   :option:`--balance-projects` may give up, below the best possible total.
-   Default: 0, so these options then only choose among the allocations with the
-   best total.
-
 .. option:: --fewest-unsatisfied
 
-   Give as few groups as possible a project they did not choose.
+   First give as few groups as possible a project they did not choose. The
+   satisfaction, and the balance with :option:`--balance-projects`, are then
+   optimized among the allocations with that fewest number of unsatisfied groups.
 
 .. option:: --balance-projects
 
-   Maximize the satisfaction of the least satisfied project. With
-   :option:`--fewest-unsatisfied` too, only among the allocations with the
-   fewest unsatisfied groups.
+   Maximize the satisfaction of the least satisfied project, giving up at most
+   :option:`--epsilon` of the best total satisfaction. The satisfaction of a
+   project adds up over its groups, so this only makes sense for projects of
+   similar sizes: a small project always has a low total.
+
+.. option:: --epsilon EPSILON
+
+   Total satisfaction that :option:`--balance-projects` may give up. Default: 0,
+   so the balance only chooses among the allocations with the best total.
+   ``inf`` balances the projects first, whatever the cost.
 
 .. option:: --sep SEP
 
@@ -128,31 +142,29 @@ The allocation solves
    x_{gp} \in \{0, 1\}
    \end{cases}
 
-The options ``fewest_unsatisfied`` and ``balance_projects`` add objectives, which
-are optimized one after the other. Each step keeps the optimum of the previous
-ones as a constraint, so the order sets the priorities: total satisfaction first
-(up to :math:`\varepsilon`), then unsatisfied groups, then the least satisfied
-project. Each step below only runs when its option is set.
+The options add objectives, optimized one after the other. Each step keeps the
+optimum of the previous ones as a constraint, so the order sets the priorities:
+unsatisfied groups, then total satisfaction, then the least satisfied project
+(which may cost up to :math:`\varepsilon` of the total).
 
-**Fewest unsatisfied groups.** A group is unsatisfied when it gets a project it
-did not choose. Let :math:`u_{gp}` be 1 if :math:`g` did not choose :math:`p`
-and 0 otherwise. The number of unsatisfied groups is linear in :math:`x`, so no
-extra variable is needed:
+**Fewest unsatisfied groups** (``fewest_unsatisfied``), solved first. A group is
+unsatisfied when it gets a project it did not choose. Let :math:`u_{gp}` be 1 if
+:math:`g` did not choose :math:`p` and 0 otherwise. The number of unsatisfied
+groups is linear in :math:`x`, so no extra variable is needed:
 
 .. math::
 
    U^* = \min_{x} \sum_{g \in G} \sum_{p \in P} u_{gp} \, x_{gp}
-   \quad \text{subject to} \quad
-   \begin{cases}
-   \sum_{g \in G} \sum_{p \in P} s_{gp} \, x_{gp} \ge S^* - \varepsilon \\
-   \text{the constraints above}
-   \end{cases}
+   \quad \text{subject to the constraints above}
 
-Groups count once whatever their size, and a group that gave no choice is always
-unsatisfied.
+The problem giving :math:`S^*` above then gets the extra constraint
+:math:`\sum_{g \in G} \sum_{p \in P} u_{gp} \, x_{gp} \le U^*`, and so do the next
+ones. Groups count once whatever their size, and a group that gave no choice is
+always unsatisfied.
 
-**Least satisfied project.** The minimum of the projects' satisfactions is
-linearized with one more variable :math:`\theta`, bounded by each of them:
+**Least satisfied project** (``balance_projects``). The minimum of the projects'
+satisfactions is linearized with one more variable :math:`\theta`, bounded by
+each of them:
 
 .. math::
 
@@ -161,15 +173,12 @@ linearized with one more variable :math:`\theta`, bounded by each of them:
    \begin{cases}
    \theta \le \sum_{g \in G} s_{gp} \, x_{gp} & \forall p \in P \\
    \sum_{g \in G} \sum_{p \in P} s_{gp} \, x_{gp} \ge S^* - \varepsilon \\
-   \sum_{g \in G} \sum_{p \in P} u_{gp} \, x_{gp} \le U^*
-      \quad \text{(with fewest\_unsatisfied)} \\
    \text{the constraints above}
    \end{cases}
 
-**Best total.** A last problem maximizes the total satisfaction again, keeping
-the constraints of the previous steps (at most :math:`U^*` unsatisfied groups,
-every project's satisfaction at least :math:`\theta^*`). Satisfaction is thus
-only given up when it improves one of the other objectives.
+A last problem then maximizes the total satisfaction again with every project's
+satisfaction at least :math:`\theta^*`, so no satisfaction is given up for
+nothing.
 
 Many allocations are often equally good. The solver returns one of them, so two
 solvers, or two versions of one, may assign some groups differently with the

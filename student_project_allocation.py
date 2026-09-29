@@ -17,9 +17,9 @@ def allocate(
     capacity=None,
     weights=None,
     scores=None,
-    epsilon=0,
     fewest_unsatisfied=False,
     balance_projects=False,
+    epsilon=0,
 ):
     """Assign each group to exactly one project, maximizing total satisfaction.
 
@@ -33,15 +33,16 @@ def allocate(
         Default: 1 for every group.
     :param scores: score of each rank, best first. Default: ``(k, k-1, ..., 1)``
         for ``k`` choices. A project the group did not choose scores 0.
-    :param epsilon: total satisfaction that ``fewest_unsatisfied`` and
-        ``balance_projects`` may give up, below the best possible total.
-    :param fewest_unsatisfied: minimize the number of groups given a project they
-        did not choose.
-    :param balance_projects: maximize the satisfaction of the least satisfied project.
-        With ``fewest_unsatisfied`` too, only among the allocations with the fewest
-        unsatisfied groups.
+    :param fewest_unsatisfied: first minimize the number of groups given a project
+        they did not choose; everything else is then optimized among the allocations
+        with that fewest number of unsatisfied groups.
+    :param balance_projects: maximize the satisfaction of the least satisfied project,
+        giving up at most ``epsilon`` of the best total satisfaction.
+    :param epsilon: total satisfaction that ``balance_projects`` may give up. Use
+        ``float("inf")`` to balance the projects first, whatever the cost.
     :returns: ``{group: project}``.
-    :raises ValueError: if a choice is not in ``projects``.
+    :raises ValueError: if a choice is not in ``projects``, a project has no
+        capacity, or the capacities cannot fit all the groups.
     :raises RuntimeError: if no allocation satisfies the capacities.
     """
     projects = list(dict.fromkeys(projects))
@@ -61,6 +62,15 @@ def allocate(
         capacity = (max(average - 1, 0), average + 1)
     if isinstance(capacity, tuple):
         capacity = dict.fromkeys(projects, capacity)
+    missing = set(projects) - set(capacity)
+    if missing:
+        raise ValueError(f"no capacity for projects: {sorted(missing)}")
+    low, high = (sum(capacity[p][k] for p in projects) for k in (0, 1))
+    if not low <= len(choices) <= high:
+        raise ValueError(
+            f"{len(choices)} groups cannot fit: the project minimums add up to {low}"
+            f" and the maximums to {high}"
+        )
 
     groups = list(choices)
     column = {p: j for j, p in enumerate(projects)}
@@ -84,19 +94,17 @@ def allocate(
     constraints = [one_project_per_group, groups_per_project]
     total = satisfaction.ravel()
     binary = dict(integrality=1, bounds=Bounds(0, 1))
-    x = _solve(-total, constraints, **binary)
-    if not (fewest_unsatisfied or balance_projects):
-        return _assignment(x, groups, projects)
-
     # Each step keeps the optimum of the previous ones as a constraint
-    constraints.append(LinearConstraint(total, total @ x - epsilon - 1e-6, np.inf))
 
     if fewest_unsatisfied:
         unchosen = (~chosen).ravel().astype(float)
         x = _solve(unchosen, constraints, **binary)
         constraints.append(LinearConstraint(unchosen, 0, unchosen @ x + 1e-6))
 
+    x = _solve(-total, constraints, **binary)
+
     if balance_projects:
+        constraints.append(LinearConstraint(total, total @ x - epsilon - 1e-6, np.inf))
         # theta, the satisfaction of the least satisfied project, is one more variable
         n = total.size
         project_satisfaction = groups_per_project.A @ sparse.diags(total)
@@ -108,9 +116,9 @@ def allocate(
             bounds=Bounds(0, np.append(np.ones(n), np.inf)),
         )[-1]
         constraints.append(LinearConstraint(project_satisfaction, theta - 1e-6, np.inf))
+        # Finally the best total at that balance, so none is given up for nothing
+        x = _solve(-total, constraints, **binary)
 
-    # Finally the best total under these constraints, so none is given up for nothing
-    x = _solve(-total, constraints, **binary)
     return _assignment(x, groups, projects)
 
 
@@ -149,6 +157,12 @@ def main(argv=None):
         metavar="FILE",
         help="text file with one project per line (default: every project chosen at least once)",
     )
+    parser.add_argument(
+        "--capacities",
+        metavar="FILE",
+        help="CSV file with the projects in the first column and 'min' and 'max' columns "
+        "giving the number of groups per project (replaces --projects, --min and --max)",
+    )
     parser.add_argument("--min", type=int, help="minimum number of groups per project")
     parser.add_argument("--max", type=int, help="maximum number of groups per project")
     parser.add_argument(
@@ -158,18 +172,19 @@ def main(argv=None):
         "--epsilon",
         type=float,
         default=0,
-        help="total satisfaction the options below may give up (default: 0)",
+        help="total satisfaction --balance-projects may give up; 'inf' balances "
+        "the projects first, whatever the cost (default: 0)",
     )
     parser.add_argument(
         "--fewest-unsatisfied",
         action="store_true",
-        help="give as few groups as possible a project they did not choose",
+        help="first give as few groups as possible a project they did not choose",
     )
     parser.add_argument(
         "--balance-projects",
         action="store_true",
-        help="raise the satisfaction of the least satisfied project "
-        "(after --fewest-unsatisfied if both are given)",
+        help="raise the satisfaction of the least satisfied project, "
+        "giving up at most --epsilon total satisfaction",
     )
     parser.add_argument("--sep", default=",", help="CSV separator (default: ,)")
     parser.add_argument(
@@ -182,13 +197,23 @@ def main(argv=None):
         i: [p if pd.notna(p) and str(p).strip() else None for p in row]
         for i, row in zip(data.index, data[args.choices].itertuples(index=False))
     }
-    if args.projects:
+    capacity = None
+    if args.capacities:
+        if args.projects or args.min is not None or args.max is not None:
+            parser.error("--capacities replaces --projects, --min and --max")
+        table = pd.read_csv(args.capacities, sep=args.sep, encoding="utf-8-sig")
+        if not {"min", "max"} <= set(table.columns):
+            parser.error("--capacities needs 'min' and 'max' columns")
+        if table[["min", "max"]].isna().any().any():
+            parser.error("--capacities: every project needs a min and a max")
+        projects = table.iloc[:, 0].astype(str).str.strip().tolist()
+        capacity = dict(zip(projects, zip(table["min"], table["max"])))
+    elif args.projects:
         with open(args.projects, encoding="utf-8") as f:
             projects = [line.strip() for line in f if line.strip()]
     else:
         projects = sorted({p for ranked in choices.values() for p in ranked} - {None})
 
-    capacity = None
     if args.min is not None or args.max is not None:
         average = len(choices) // len(projects)
         capacity = (

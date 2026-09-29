@@ -24,7 +24,7 @@ def test_unchosen_project_is_filled_by_min_capacity():
 def test_errors():
     with pytest.raises(ValueError, match="unknown"):
         allocate({"a": ["P9"]}, ["P1"])
-    with pytest.raises(RuntimeError, match="no allocation"):
+    with pytest.raises(ValueError, match="cannot fit"):
         allocate({"a": ["P1"]}, ["P1", "P2"], capacity=(1, 1))
 
 
@@ -61,16 +61,20 @@ def test_balance_projects():
         choices, ["P1", "P2"], capacity=(0, 4), epsilon=1, balance_projects=True
     )
     assert sorted(result.values()) == ["P1", "P1", "P1", "P2"]
+    # Balancing first, whatever the cost: two groups in each project
+    result = allocate(
+        choices, ["P1", "P2"], capacity=(0, 4), epsilon=float("inf"), balance_projects=True
+    )
+    assert sorted(result.values()) == ["P1", "P1", "P2", "P2"]
 
 
 def test_fewest_unsatisfied():
     # One place per project. The best total (20) leaves b on a project it did not
-    # choose; giving up 8 points lets every group get one of its choices (total 12).
+    # choose; with the option every group gets one of its choices (total 12).
     choices = {"a": ["P1", "P2"], "b": ["P1", "P2"], "c": ["P2", "P3"]}
     kwargs = dict(projects=["P1", "P2", "P3"], capacity=(0, 1), scores=[10, 1])
-    result = allocate(choices, epsilon=7, fewest_unsatisfied=True, **kwargs)
-    assert unsatisfied(choices, result) == 1
-    result = allocate(choices, epsilon=8, fewest_unsatisfied=True, **kwargs)
+    assert unsatisfied(choices, allocate(choices, **kwargs)) == 1
+    result = allocate(choices, fewest_unsatisfied=True, **kwargs)
     assert unsatisfied(choices, result) == 0 and result["c"] == "P3"
 
 
@@ -100,3 +104,16 @@ def test_fewest_unsatisfied_comes_before_balance_projects():
     result = allocate(choices, fewest_unsatisfied=True, balance_projects=True, **kwargs)
     assert unsatisfied(choices, result) == 0
     assert least_satisfied_project(choices, result, [3, 1]) == 2
+
+
+def test_capacities_file(tmp_path, capsys):
+    answers = tmp_path / "answers.csv"
+    answers.write_text("name,first,second\nA,P1,P2\nB,P1,P2\nC,P1,P2\n", encoding="utf-8")
+    capacities = tmp_path / "capacities.csv"
+    capacities.write_text("project,min,max\nP1,0,1\nP2,1,3\nP3,1,1\n", encoding="utf-8")
+    main([str(answers), "--choices", "first", "second", "--capacities", str(capacities)])
+    out, _ = capsys.readouterr()
+    assert sorted(line.split(",")[-2] for line in out.splitlines()[1:]) == ["P1", "P2", "P3"]
+    with pytest.raises(SystemExit, match="cannot fit"):
+        capacities.write_text("project,min,max\nP1,0,1\nP2,0,1\n", encoding="utf-8")
+        main([str(answers), "--choices", "first", "second", "--capacities", str(capacities)])

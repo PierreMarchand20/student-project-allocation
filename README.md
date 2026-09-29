@@ -38,13 +38,22 @@ Options:
 - `--projects FILE`: every project, one per line. By default the projects are those chosen at least once.
   Pass this option when some project may be chosen by nobody but must still be filled.
 - `--min N` / `--max N`: number of groups per project. By default it is the average ± 1.
+- `--capacities FILE`: a CSV with the projects in the first column and `min` and `max` columns, for a
+  different number of groups per project. It replaces `--projects`, `--min` and `--max`:
+
+  ```
+  project,min,max
+  Acoustics,2,4
+  Robotics,1,3
+  ```
 - `--weight COLUMN`: a column that multiplies each group's satisfaction. Use it to lower the priority
   of late or incomplete answers, for example.
-- `--fewest-unsatisfied`: give as few groups as possible a project they did not choose.
-- `--balance-projects`: maximize the total satisfaction of the least satisfied project
-  (after `--fewest-unsatisfied` if both are given).
-- `--epsilon EPSILON`: total satisfaction the two options above may give up, below the best
-  possible total (default 0).
+- `--fewest-unsatisfied`: first give as few groups as possible a project they did not choose;
+  everything else is then optimized with that fewest number of unsatisfied groups.
+- `--balance-projects`: maximize the total satisfaction of the least satisfied project. Project
+  totals add up over their groups, so this only makes sense for projects of similar sizes.
+- `--epsilon EPSILON`: total satisfaction `--balance-projects` may give up (default 0);
+  `inf` balances the projects first, whatever the cost.
 - `--sep ';'`: the CSV separator.
 
 A choice scores `k` for first, `k-1` for second, …, `1` for the `k`-th, and `0` if the project was not chosen.
