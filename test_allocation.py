@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import pytest
 
 from student_project_allocation import allocate, main
@@ -117,3 +120,14 @@ def test_capacities_file(tmp_path, capsys):
     with pytest.raises(SystemExit, match="cannot fit"):
         capacities.write_text("project,min,max\nP1,0,1\nP2,0,1\n", encoding="utf-8")
         main([str(answers), "--choices", "first", "second", "--capacities", str(capacities)])
+
+
+def test_verbose_log_goes_to_stderr(tmp_path):
+    # A real process: HiGHS writes from C, which pytest's capture cannot follow
+    answers = tmp_path / "answers.csv"
+    answers.write_text("name,first,second\nA,P1,P2\nB,P2,P1\n", encoding="utf-8")
+    command = [sys.executable, "-m", "student_project_allocation", str(answers)]
+    command += ["--choices", "first", "second", "--fewest-unsatisfied", "-v"]
+    run = subprocess.run(command, capture_output=True, text=True, check=True)
+    assert run.stdout.splitlines()[0] == "name,first,second,project,rank"
+    assert "===== Fewest unsatisfied groups" in run.stderr and "Optimal" in run.stderr

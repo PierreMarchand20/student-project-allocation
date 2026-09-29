@@ -11,7 +11,7 @@ Installation
 
 .. code-block:: console
 
-   pip install git+<url of this repository>
+   pip install git+https://github.com/PierreMarchand20/student-project-allocation
 
 Command line
 ------------
@@ -60,7 +60,9 @@ command also prints how many groups got each rank.
 
    CSV file for a different number of groups per project: the projects in the
    first column and the ``min`` and ``max`` columns. It replaces
-   :option:`--projects`, :option:`--min` and :option:`--max`.
+   :option:`--projects`, :option:`--min` and :option:`--max`. The minimums
+   must add up to at most the number of groups and the maximums to at least
+   that number, otherwise the command stops with an error saying so.
 
    .. code-block:: text
 
@@ -92,6 +94,13 @@ command also prints how many groups got each rank.
    so the balance only chooses among the allocations with the best total.
    ``inf`` balances the projects first, whatever the cost.
 
+.. option:: -v, --verbose
+
+   Print the log of the solver (HiGHS) on the standard error, with one titled
+   section per problem solved: status, objective, gap and timing. HiGHS always
+   minimizes, so a maximized objective shows as its negative. The CSV on the
+   standard output is unchanged.
+
 .. option:: --sep SEP
 
    CSV separator. Default: ``,``.
@@ -99,6 +108,27 @@ command also prints how many groups got each rank.
 .. option:: -o FILE, --output FILE
 
    Output CSV. Default: standard output.
+
+Choosing the options
+--------------------
+
+- **Start with the plain command.** It maximizes the total satisfaction, and
+  often gives everyone one of their choices already.
+- **Add** :option:`--fewest-unsatisfied` to make sure that as few groups as
+  possible get a project they did not choose. It changes nothing when
+  everyone can get a choice anyway, so it is safe to always use.
+- **Add** :option:`--balance-projects` only when the projects have similar
+  sizes, to avoid a project where most groups got a poor choice. Start with a
+  small :option:`--epsilon` (a few points) and compare with the plain result:
+  the counts of first, second… choices show what the balance costs.
+- **Use** :option:`--weight` to give less priority to some groups, for
+  example 0.75 for a late answer.
+- **Use** :option:`-v` to check that every problem was solved to optimality.
+
+.. code-block:: console
+
+   $ spa answers.csv --choices first second third --capacities capacities.csv \
+         --fewest-unsatisfied --epsilon 2 --balance-projects -o allocation.csv
 
 Python
 ------
@@ -179,6 +209,9 @@ each of them:
 A last problem then maximizes the total satisfaction again with every project's
 satisfaction at least :math:`\theta^*`, so no satisfaction is given up for
 nothing.
+
+Each problem is solved to optimality (a relative gap of 0 for HiGHS, instead of
+its default 0.01 %), since its optimum becomes a constraint of the next ones.
 
 Many allocations are often equally good. The solver returns one of them, so two
 solvers, or two versions of one, may assign some groups differently with the

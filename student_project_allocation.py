@@ -2,6 +2,8 @@
 by integer programming, maximizing the total satisfaction of their ranked choices."""
 
 import argparse
+import contextlib
+import os
 import sys
 from collections import Counter
 
@@ -20,6 +22,7 @@ def allocate(
     fewest_unsatisfied=False,
     balance_projects=False,
     epsilon=0,
+    verbose=False,
 ):
     """Assign each group to exactly one project, maximizing total satisfaction.
 
@@ -40,6 +43,7 @@ def allocate(
         giving up at most ``epsilon`` of the best total satisfaction.
     :param epsilon: total satisfaction that ``balance_projects`` may give up. Use
         ``float("inf")`` to balance the projects first, whatever the cost.
+    :param verbose: print the log of the solver (HiGHS) for each problem solved.
     :returns: ``{group: project}``.
     :raises ValueError: if a choice is not in ``projects``, a project has no
         capacity, or the capacities cannot fit all the groups.
@@ -93,15 +97,15 @@ def allocate(
     )
     constraints = [one_project_per_group, groups_per_project]
     total = satisfaction.ravel()
-    binary = dict(integrality=1, bounds=Bounds(0, 1))
+    binary = dict(integrality=1, bounds=Bounds(0, 1), verbose=verbose)
     # Each step keeps the optimum of the previous ones as a constraint
 
     if fewest_unsatisfied:
         unchosen = (~chosen).ravel().astype(float)
-        x = _solve(unchosen, constraints, **binary)
+        x = _solve("Fewest unsatisfied groups (minimized)", unchosen, constraints, **binary)
         constraints.append(LinearConstraint(unchosen, 0, unchosen @ x + 1e-6))
 
-    x = _solve(-total, constraints, **binary)
+    x = _solve("Total satisfaction (maximized, so HiGHS shows its negative)", -total, constraints, **binary)
 
     if balance_projects:
         constraints.append(LinearConstraint(total, total @ x - epsilon - 1e-6, np.inf))
@@ -109,15 +113,17 @@ def allocate(
         n = total.size
         project_satisfaction = groups_per_project.A @ sparse.diags(total)
         theta = _solve(
+            "Least satisfied project (maximized, so HiGHS shows its negative)",
             np.append(np.zeros(n), -1),
             [LinearConstraint(_with_column(c.A, 0), c.lb, c.ub) for c in constraints]
             + [LinearConstraint(_with_column(project_satisfaction, -1), 0, np.inf)],
             integrality=np.append(np.ones(n), 0),
             bounds=Bounds(0, np.append(np.ones(n), np.inf)),
+            verbose=verbose,
         )[-1]
         constraints.append(LinearConstraint(project_satisfaction, theta - 1e-6, np.inf))
         # Finally the best total at that balance, so none is given up for nothing
-        x = _solve(-total, constraints, **binary)
+        x = _solve("Total satisfaction at that balance (maximized, so HiGHS shows its negative)", -total, constraints, **binary)
 
     return _assignment(x, groups, projects)
 
@@ -132,11 +138,29 @@ def _assignment(x, groups, projects):
     return {g: projects[j] for g, j in zip(groups, x.argmax(axis=1))}
 
 
-def _solve(c, constraints, **kwargs):
-    result = milp(c, constraints=constraints, **kwargs)
+def _solve(step, c, constraints, verbose=False, **kwargs):
+    if verbose:
+        print(f"\n===== {step} =====")
+        sys.stdout.flush()  # before HiGHS writes to the same stream from C
+    options = {"disp": verbose, "mip_rel_gap": 0}  # exact optima, reused as constraints
+    result = milp(c, constraints=constraints, options=options, **kwargs)
     if not result.success:
         raise RuntimeError(f"no allocation found ({result.message}), check capacities")
     return result.x
+
+
+@contextlib.contextmanager
+def _stdout_to_stderr():
+    # At the file descriptor level, as HiGHS writes from C, not through sys.stdout
+    sys.stdout.flush()
+    saved = os.dup(1)
+    os.dup2(2, 1)
+    try:
+        yield
+    finally:
+        sys.stdout.flush()
+        os.dup2(saved, 1)
+        os.close(saved)
 
 
 def main(argv=None):
@@ -186,6 +210,9 @@ def main(argv=None):
         help="raise the satisfaction of the least satisfied project, "
         "giving up at most --epsilon total satisfaction",
     )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="print the solver log on stderr"
+    )
     parser.add_argument("--sep", default=",", help="CSV separator (default: ,)")
     parser.add_argument(
         "-o", "--output", default="-", help="output CSV (default: stdout)"
@@ -222,16 +249,20 @@ def main(argv=None):
         )
     weights = data[args.weight].to_dict() if args.weight else None
 
+    # The solver log goes to stderr, so it never mixes with the CSV on stdout
+    redirect = _stdout_to_stderr() if args.verbose else contextlib.nullcontext()
     try:
-        allocation = allocate(
-            choices,
-            projects,
-            capacity,
-            weights,
-            epsilon=args.epsilon,
-            fewest_unsatisfied=args.fewest_unsatisfied,
-            balance_projects=args.balance_projects,
-        )
+        with redirect:
+            allocation = allocate(
+                choices,
+                projects,
+                capacity,
+                weights,
+                epsilon=args.epsilon,
+                fewest_unsatisfied=args.fewest_unsatisfied,
+                balance_projects=args.balance_projects,
+                verbose=args.verbose,
+            )
     except (ValueError, RuntimeError) as e:
         sys.exit(f"error: {e}")
 

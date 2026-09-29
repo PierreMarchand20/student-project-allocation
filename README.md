@@ -9,7 +9,7 @@ Documentation: https://pierremarchand20.github.io/student-project-allocation/
 ## Install
 
 ```
-pip install git+<url of this repository>
+pip install git+https://github.com/PierreMarchand20/student-project-allocation
 ```
 
 ## Command line
@@ -39,7 +39,8 @@ Options:
   Pass this option when some project may be chosen by nobody but must still be filled.
 - `--min N` / `--max N`: number of groups per project. By default it is the average ± 1.
 - `--capacities FILE`: a CSV with the projects in the first column and `min` and `max` columns, for a
-  different number of groups per project. It replaces `--projects`, `--min` and `--max`:
+  different number of groups per project. It replaces `--projects`, `--min` and `--max`.
+  The minimums must add up to at most the number of groups and the maximums to at least that number:
 
   ```
   project,min,max
@@ -54,7 +55,18 @@ Options:
   totals add up over their groups, so this only makes sense for projects of similar sizes.
 - `--epsilon EPSILON`: total satisfaction `--balance-projects` may give up (default 0);
   `inf` balances the projects first, whatever the cost.
+- `-v` / `--verbose`: print the solver (HiGHS) log on stderr, one section per problem solved.
 - `--sep ';'`: the CSV separator.
+
+For example, with a capacity per project, as few groups as possible outside their choices, and a
+balance between projects costing at most 2 points of total satisfaction:
+
+```
+spa answers.csv --choices first second third --capacities capacities.csv \
+    --fewest-unsatisfied --epsilon 2 --balance-projects -o allocation.csv
+```
+
+The documentation explains when to use each option.
 
 A choice scores `k` for first, `k-1` for second, …, `1` for the `k`-th, and `0` if the project was not chosen.
 
